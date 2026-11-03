@@ -1,0 +1,32 @@
+[Unit]
+Description=dnctl DartNode monitor (webhook receiver and account reconciler)
+Documentation=https://github.com/afterdarksys/dnctl
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=dnctl
+Group=dnctl
+ExecStart=/usr/local/bin/dnctl monitor serve --config /etc/dnctl/monitor.json
+Restart=on-failure
+RestartSec=10s
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/dnctl
+ReadOnlyPaths=/etc/dnctl
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

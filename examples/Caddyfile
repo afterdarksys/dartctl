@@ -1,0 +1,13 @@
+# HTTPS in front of the dnctl receiver. Caddy gets the certificate itself.
+hooks.example.com {
+	handle /dartnode/webhook {
+		request_body {
+			max_size 64KB
+		}
+		reverse_proxy 127.0.0.1:8787
+	}
+	handle /healthz {
+		reverse_proxy 127.0.0.1:8787
+	}
+	respond 404
+}
