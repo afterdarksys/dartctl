@@ -82,7 +82,7 @@ func New(base, token string) (*Client, error) {
 		base:       u,
 		token:      token,
 		HTTP:       &http.Client{Timeout: 30 * time.Second, Transport: Transport(), CheckRedirect: refuseRedirect},
-		UserAgent:  "dnctl",
+		UserAgent:  "dartctl",
 		MaxRetries: 3,
 		MaxWait:    60 * time.Second,
 	}, nil

@@ -55,7 +55,7 @@ func (a Alert) Text() string {
 	if a.Resolved {
 		prefix = "RESOLVED"
 	}
-	s := fmt.Sprintf("[dnctl %s] %s", prefix, a.Title)
+	s := fmt.Sprintf("[dartctl %s] %s", prefix, a.Title)
 	if a.Detail != "" {
 		s += "\n" + a.Detail
 	}

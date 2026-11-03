@@ -41,7 +41,7 @@ const (
 
 // OpenStore creates or opens dir. It refuses an existing directory owned by
 // another user (a mistyped state_dir must not chmod a system directory) and
-// takes an exclusive lock, so two dnctl processes never share one store.
+// takes an exclusive lock, so two dartctl processes never share one store.
 func OpenStore(dir string) (*Store, error) {
 	if info, err := os.Stat(dir); err == nil {
 		if !info.IsDir() {
@@ -65,7 +65,7 @@ func OpenStore(dir string) (*Store, error) {
 	}
 	if err := lockFile(lock); err != nil {
 		lock.Close()
-		return nil, fmt.Errorf("state_dir %s is in use by another dnctl process (%v)", dir, err)
+		return nil, fmt.Errorf("state_dir %s is in use by another dartctl process (%v)", dir, err)
 	}
 	return &Store{dir: dir, lock: lock}, nil
 }

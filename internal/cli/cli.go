@@ -1,4 +1,4 @@
-// Package cli implements the dnctl command line.
+// Package cli implements the dartctl command line.
 package cli
 
 import (
@@ -17,15 +17,15 @@ import (
 	"syscall"
 	"text/tabwriter"
 
-	"github.com/afterdarksys/dnctl/internal/api"
-	"github.com/afterdarksys/dnctl/internal/secretfile"
+	"github.com/afterdarksys/dartctl/internal/api"
+	"github.com/afterdarksys/dartctl/internal/secretfile"
 )
 
 var Version = "0.1.0-dev"
 
-const usage = `dnctl - unofficial command line and monitor for the DartNode API
+const usage = `dartctl - unofficial command line and monitor for the DartNode API
 
-Usage: dnctl [global flags] <command> [arguments] [flags]
+Usage: dartctl [global flags] <command> [arguments] [flags]
 
 Read:
   account                               account profile
@@ -56,7 +56,7 @@ Monitor:
 
 Global flags (before the command):
   --token-file FILE   API token file (mode 600). Without it: $DARTNODE_TOKEN,
-                      then $DNCTL_TOKEN_FILE, then ~/.config/dnctl/token
+                      then $DARTCTL_TOKEN_FILE, then ~/.config/dartctl/token
   --api URL           API base (default https://api.dartnode.net/v1)
   --json              print raw JSON
 
@@ -71,12 +71,12 @@ type env struct {
 	getenv    func(string) string
 }
 
-// Main runs dnctl and returns the process exit code.
+// Main runs dartctl and returns the process exit code.
 func Main(args []string, stdout, stderr io.Writer) int {
 	e := &env{out: stdout, errw: stderr, getenv: os.Getenv}
 	rest, err := e.globals(args)
 	if err != nil {
-		fmt.Fprintln(stderr, "dnctl:", err)
+		fmt.Fprintln(stderr, "dartctl:", err)
 		return 2
 	}
 	if len(rest) == 0 || rest[0] == "help" || rest[0] == "-h" || rest[0] == "--help" {
@@ -92,10 +92,10 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		case errors.As(err, &ex):
 			return int(ex)
 		case errors.As(err, &ue):
-			fmt.Fprintln(stderr, "dnctl:", err)
+			fmt.Fprintln(stderr, "dartctl:", err)
 			return 2
 		default:
-			fmt.Fprintln(stderr, "dnctl:", err)
+			fmt.Fprintln(stderr, "dartctl:", err)
 			return 1
 		}
 	}
@@ -147,7 +147,7 @@ func (e *env) globals(args []string) ([]string, error) {
 }
 
 // client resolves the token: --token-file, then $DARTNODE_TOKEN, then
-// $DNCTL_TOKEN_FILE, then ~/.config/dnctl/token. An explicit flag always wins,
+// $DARTCTL_TOKEN_FILE, then ~/.config/dartctl/token. An explicit flag always wins,
 // so a stray environment variable can never redirect a change to another
 // account.
 func (e *env) client() (*api.Client, error) {
@@ -158,14 +158,14 @@ func (e *env) client() (*api.Client, error) {
 	if tok == "" {
 		path := e.tokenFile
 		if path == "" {
-			path = e.getenv("DNCTL_TOKEN_FILE")
+			path = e.getenv("DARTCTL_TOKEN_FILE")
 		}
 		if path == "" {
 			home, err := os.UserHomeDir()
 			if err != nil {
 				return nil, err
 			}
-			path = filepath.Join(home, ".config", "dnctl", "token")
+			path = filepath.Join(home, ".config", "dartctl", "token")
 		}
 		var err error
 		if tok, err = secretfile.Read(path); err != nil {
@@ -203,7 +203,7 @@ func (f *flags) parse(args []string) error {
 
 func (f *flags) need(n int, form string) error {
 	if len(f.pos) != n {
-		return usagef("usage: dnctl %s", form)
+		return usagef("usage: dartctl %s", form)
 	}
 	return nil
 }
@@ -230,7 +230,7 @@ func (e *env) print(v any, table func(w *tabwriter.Writer)) error {
 func (e *env) run(ctx context.Context, cmd string, args []string) error {
 	switch cmd {
 	case "version":
-		fmt.Fprintln(e.out, "dnctl", Version)
+		fmt.Fprintln(e.out, "dartctl", Version)
 		return nil
 	case "account":
 		return e.raw(ctx, "/account", nil)
@@ -251,7 +251,7 @@ func (e *env) run(ctx context.Context, cmd string, args []string) error {
 	case "monitor":
 		return e.monitor(ctx, args)
 	}
-	return usagef("unknown command %q (dnctl help)", cmd)
+	return usagef("unknown command %q (dartctl help)", cmd)
 }
 
 func (e *env) raw(ctx context.Context, path string, q url.Values) error {
@@ -268,7 +268,7 @@ func (e *env) raw(ctx context.Context, path string, q url.Values) error {
 
 func (e *env) compute(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return usagef("usage: dnctl compute list|get|config")
+		return usagef("usage: dartctl compute list|get|config")
 	}
 	f := newFlags("compute")
 	status := f.fs.String("status", "", "")
@@ -305,12 +305,12 @@ func (e *env) compute(ctx context.Context, args []string) error {
 		}
 		return e.raw(ctx, path, nil)
 	}
-	return usagef("usage: dnctl compute list|get|config")
+	return usagef("usage: dartctl compute list|get|config")
 }
 
 func (e *env) ips(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return usagef("usage: dnctl ips list|get <ip>")
+		return usagef("usage: dartctl ips list|get <ip>")
 	}
 	c, err := e.client()
 	if err != nil {
@@ -334,11 +334,11 @@ func (e *env) ips(ctx context.Context, args []string) error {
 		})
 	case "get":
 		if len(args) != 2 || !validIP(args[1]) {
-			return usagef("usage: dnctl ips get <ip>")
+			return usagef("usage: dartctl ips get <ip>")
 		}
 		return e.raw(ctx, "/network/ips/"+args[1], nil)
 	}
-	return usagef("usage: dnctl ips list|get <ip>")
+	return usagef("usage: dartctl ips list|get <ip>")
 }
 
 func validIP(s string) bool {
@@ -355,7 +355,7 @@ func validIP(s string) bool {
 
 func (e *env) billing(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return usagef("usage: dnctl billing invoices|invoice <id>|balance")
+		return usagef("usage: dartctl billing invoices|invoice <id>|balance")
 	}
 	f := newFlags("billing")
 	open := f.fs.Bool("open", false, "")
@@ -412,7 +412,7 @@ func (e *env) billing(ctx context.Context, args []string) error {
 			}
 		})
 	}
-	return usagef("usage: dnctl billing invoices|invoice <id>|balance")
+	return usagef("usage: dartctl billing invoices|invoice <id>|balance")
 }
 
 func short(ts string) string {
@@ -446,7 +446,7 @@ func (e *env) serviceChange(ctx context.Context, cmd string, args []string) erro
 		return err
 	}
 	if len(f.pos) == 0 {
-		return usagef("usage: dnctl %s <id> ...", cmd)
+		return usagef("usage: dartctl %s <id> ...", cmd)
 	}
 	id, err := atoiArg(f.pos[0], "instance id")
 	if err != nil {
@@ -459,7 +459,7 @@ func (e *env) serviceChange(ctx context.Context, cmd string, args []string) erro
 	switch cmd {
 	case "power":
 		if len(f.pos) != 2 {
-			return usagef("usage: dnctl power <id> on|shutdown|reboot-hard|off --yes")
+			return usagef("usage: dartctl power <id> on|shutdown|reboot-hard|off --yes")
 		}
 		action := map[string]string{"on": "on", "shutdown": "shutdown", "off": "off", "reboot-hard": "reset", "reset": "reset"}[f.pos[1]]
 		if action == "" {
@@ -469,12 +469,12 @@ func (e *env) serviceChange(ctx context.Context, cmd string, args []string) erro
 		method, path, body = "POST", base+"/power", map[string]string{"action": action}
 	case "hostname":
 		if len(f.pos) != 2 || !validHostname(f.pos[1]) {
-			return usagef("usage: dnctl hostname <id> <new-hostname> --yes")
+			return usagef("usage: dartctl hostname <id> <new-hostname> --yes")
 		}
 		method, path, body = "PATCH", base+"/hostname", map[string]string{"hostname": f.pos[1]}
 	case "reinstall":
 		if len(f.pos) != 1 || *osID <= 0 {
-			return usagef("usage: dnctl reinstall <id> --os <template-id> --yes --confirm <hostname>")
+			return usagef("usage: dartctl reinstall <id> --os <template-id> --yes --confirm <hostname>")
 		}
 		destructive = true
 		method, path, body = "POST", base+"/reinstall", map[string]int{"os": *osID}
@@ -526,7 +526,7 @@ func (e *env) rdns(ctx context.Context, args []string) error {
 		return err
 	}
 	if len(f.pos) < 2 || !validIP(f.pos[1]) {
-		return usagef("usage: dnctl rdns set <ip> <fqdn> --yes | rdns clear <ip> --yes --confirm <ip>")
+		return usagef("usage: dartctl rdns set <ip> <fqdn> --yes | rdns clear <ip> --yes --confirm <ip>")
 	}
 	ip := f.pos[1]
 	var method string
@@ -540,7 +540,7 @@ func (e *env) rdns(ctx context.Context, args []string) error {
 		}
 		method = "DELETE"
 	default:
-		return usagef("usage: dnctl rdns set <ip> <fqdn> --yes | rdns clear <ip> --yes --confirm <ip>")
+		return usagef("usage: dartctl rdns set <ip> <fqdn> --yes | rdns clear <ip> --yes --confirm <ip>")
 	}
 	if !*yes {
 		return usagef("rdns %s changes %s: re-run with --yes", f.pos[0], ip)
@@ -558,14 +558,14 @@ func (e *env) rdns(ctx context.Context, args []string) error {
 
 func (e *env) deploy(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return usagef("usage: dnctl deploy plans|regions|os-templates|estimate|create")
+		return usagef("usage: dartctl deploy plans|regions|os-templates|estimate|create")
 	}
 	switch args[0] {
 	case "plans", "regions", "os-templates":
 		return e.raw(ctx, "/deploy/"+args[0], nil)
 	case "estimate", "create":
 	default:
-		return usagef("usage: dnctl deploy plans|regions|os-templates|estimate|create")
+		return usagef("usage: dartctl deploy plans|regions|os-templates|estimate|create")
 	}
 	f := newFlags("deploy")
 	plan := f.fs.Int("plan", 0, "")
@@ -583,7 +583,7 @@ func (e *env) deploy(ctx context.Context, args []string) error {
 		return err
 	}
 	if *plan <= 0 || *region == "" || !validHostname(*host) || *osCat <= 0 || *osVer <= 0 || len(f.pos) != 0 {
-		return usagef("usage: dnctl deploy %s --plan ID --region CODE --hostname NAME --os ID --os-version ID [--ipv4 N --ipv6 N --ddos --backups --cycle 1|3|6|12]", args[0])
+		return usagef("usage: dartctl deploy %s --plan ID --region CODE --hostname NAME --os ID --os-version ID [--ipv4 N --ipv6 N --ddos --backups --cycle 1|3|6|12]", args[0])
 	}
 	if *cycle != 1 && *cycle != 3 && *cycle != 6 && *cycle != 12 {
 		return usagef("--cycle must be 1, 3, 6 or 12")
@@ -688,7 +688,7 @@ func validHookURL(s string) error {
 
 func (e *env) webhooks(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return usagef("usage: dnctl webhooks list|get|events|create|update|delete")
+		return usagef("usage: dartctl webhooks list|get|events|create|update|delete")
 	}
 	f := newFlags("webhooks")
 	name := f.fs.String("name", "", "")
@@ -747,7 +747,7 @@ func (e *env) webhooks(ctx context.Context, args []string) error {
 		return e.raw(ctx, "/webhooks/events", nil)
 	case "create":
 		if *name == "" || *events == "" || *secretOut == "" {
-			return usagef("usage: dnctl webhooks create --name N --url URL --events a,b|* --secret-out FILE --yes")
+			return usagef("usage: dartctl webhooks create --name N --url URL --events a,b|* --secret-out FILE --yes")
 		}
 		if err := validHookURL(*hookURL); err != nil {
 			return err
@@ -841,5 +841,5 @@ func (e *env) webhooks(ctx context.Context, args []string) error {
 		fmt.Fprintf(e.out, "webhook %d deleted\n", id)
 		return nil
 	}
-	return usagef("usage: dnctl webhooks list|get|events|create|update|delete")
+	return usagef("usage: dartctl webhooks list|get|events|create|update|delete")
 }

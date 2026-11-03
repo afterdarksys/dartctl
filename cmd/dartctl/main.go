@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/afterdarksys/dnctl/internal/cli"
+	"github.com/afterdarksys/dartctl/internal/cli"
 )
 
 func main() {

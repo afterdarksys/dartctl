@@ -1,3 +1,3 @@
-module github.com/afterdarksys/dnctl
+module github.com/afterdarksys/dartctl
 
 go 1.22

@@ -1,13 +1,13 @@
 [Unit]
-Description=dnctl DartNode monitor (webhook receiver and account reconciler)
-Documentation=https://github.com/afterdarksys/dnctl
+Description=dartctl DartNode monitor (webhook receiver and account reconciler)
+Documentation=https://github.com/afterdarksys/dartctl
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-User=dnctl
-Group=dnctl
-ExecStart=/usr/local/bin/dnctl monitor serve --config /etc/dnctl/monitor.json
+User=dartctl
+Group=dartctl
+ExecStart=/usr/local/bin/dartctl monitor serve --config /etc/dartctl/monitor.json
 Restart=on-failure
 RestartSec=10s
 UMask=0077
@@ -16,8 +16,8 @@ PrivateTmp=yes
 PrivateDevices=yes
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=/var/lib/dnctl
-ReadOnlyPaths=/etc/dnctl
+ReadWritePaths=/var/lib/dartctl
+ReadOnlyPaths=/etc/dartctl
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes

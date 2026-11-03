@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/afterdarksys/dnctl/internal/api"
-	"github.com/afterdarksys/dnctl/internal/webhook"
+	"github.com/afterdarksys/dartctl/internal/api"
+	"github.com/afterdarksys/dartctl/internal/webhook"
 )
 
 type memSink struct {

@@ -1,12 +1,12 @@
 {
-  "token_file": "/etc/dnctl/token",
-  "state_dir": "/var/lib/dnctl",
+  "token_file": "/etc/dartctl/token",
+  "state_dir": "/var/lib/dartctl",
   "interval": "15m",
 
   "listen": "127.0.0.1:8787",
   "path": "/dartnode/webhook",
-  "secret_file": "/etc/dnctl/webhook-secret",
-  "previous_secret_file": "/etc/dnctl/webhook-secret.previous",
+  "secret_file": "/etc/dartctl/webhook-secret",
+  "previous_secret_file": "/etc/dartctl/webhook-secret.previous",
 
   "expect": {
     "hosts": ["web-1.example.com", "db-1.example.com"],
@@ -18,7 +18,7 @@
 
   "sinks": [
     { "type": "stdout", "min_severity": "info" },
-    { "type": "slack", "url_file": "/etc/dnctl/slack-url", "min_severity": "warning" },
-    { "type": "matrix", "homeserver": "https://matrix.example.com", "room_id": "!roomid:example.com", "token_file": "/etc/dnctl/matrix-token", "min_severity": "warning" }
+    { "type": "slack", "url_file": "/etc/dartctl/slack-url", "min_severity": "warning" },
+    { "type": "matrix", "homeserver": "https://matrix.example.com", "room_id": "!roomid:example.com", "token_file": "/etc/dartctl/matrix-token", "min_severity": "warning" }
   ]
 }

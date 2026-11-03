@@ -10,7 +10,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/afterdarksys/dnctl/internal/webhook"
+	"github.com/afterdarksys/dartctl/internal/webhook"
 )
 
 // Receiver is the HTTP handler DartNode delivers webhooks to.

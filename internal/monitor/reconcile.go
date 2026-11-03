@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/afterdarksys/dnctl/internal/api"
+	"github.com/afterdarksys/dartctl/internal/api"
 )
 
 // Expect describes the account state that counts as healthy.

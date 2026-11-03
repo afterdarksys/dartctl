@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/afterdarksys/dnctl/internal/api"
-	"github.com/afterdarksys/dnctl/internal/secretfile"
-	"github.com/afterdarksys/dnctl/internal/webhook"
+	"github.com/afterdarksys/dartctl/internal/api"
+	"github.com/afterdarksys/dartctl/internal/secretfile"
+	"github.com/afterdarksys/dartctl/internal/webhook"
 )
 
 // Config is the monitor's JSON configuration. Secrets are file paths only.
@@ -104,7 +104,7 @@ func (c *Config) secrets() ([][]byte, error) {
 }
 
 // CheckOnce runs one reconcile pass, sends transitions, and returns the open
-// findings. It is what `dnctl monitor check` and the serve loop both use.
+// findings. It is what `dartctl monitor check` and the serve loop both use.
 func CheckOnce(ctx context.Context, c *Config, d *Dispatcher, st *Store, now time.Time) ([]Alert, error) {
 	client, err := c.Client()
 	if err != nil {

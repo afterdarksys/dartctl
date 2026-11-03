@@ -13,14 +13,14 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/afterdarksys/dnctl/internal/monitor"
-	"github.com/afterdarksys/dnctl/internal/secretfile"
-	"github.com/afterdarksys/dnctl/internal/webhook"
+	"github.com/afterdarksys/dartctl/internal/monitor"
+	"github.com/afterdarksys/dartctl/internal/secretfile"
+	"github.com/afterdarksys/dartctl/internal/webhook"
 )
 
 func (e *env) monitor(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return usagef("usage: dnctl monitor check|serve|test-alert|send-test")
+		return usagef("usage: dartctl monitor check|serve|test-alert|send-test")
 	}
 	f := newFlags("monitor")
 	cfgPath := f.fs.String("config", "", "")
@@ -37,7 +37,7 @@ func (e *env) monitor(ctx context.Context, args []string) error {
 		return e.sendTest(ctx, *secretFile, *target, *event)
 	}
 	if *cfgPath == "" {
-		return usagef("usage: dnctl monitor %s --config FILE", args[0])
+		return usagef("usage: dartctl monitor %s --config FILE", args[0])
 	}
 	cfg, err := monitor.LoadConfig(*cfgPath)
 	if err != nil {
@@ -76,9 +76,9 @@ func (e *env) monitor(ctx context.Context, args []string) error {
 	case "serve":
 		return monitor.Serve(ctx, cfg, d, logf)
 	case "test-alert":
-		return d.Send(ctx, monitor.Alert{Key: "test", Severity: monitor.Critical, Level: "critical", Title: "dnctl test alert", Detail: "If you can read this, alert delivery works.", Source: "test", Time: time.Now()})
+		return d.Send(ctx, monitor.Alert{Key: "test", Severity: monitor.Critical, Level: "critical", Title: "dartctl test alert", Detail: "If you can read this, alert delivery works.", Source: "test", Time: time.Now()})
 	}
-	return usagef("usage: dnctl monitor check|serve|test-alert|send-test")
+	return usagef("usage: dartctl monitor check|serve|test-alert|send-test")
 }
 
 var eventType = regexp.MustCompile(`^[a-z0-9_]+(\.[a-z0-9_]+){1,4}$`)
@@ -87,7 +87,7 @@ var eventType = regexp.MustCompile(`^[a-z0-9_]+(\.[a-z0-9_]+){1,4}$`)
 // operator can prove the whole path before registering with DartNode.
 func (e *env) sendTest(ctx context.Context, secretFile, target, event string) error {
 	if secretFile == "" || target == "" {
-		return usagef("usage: dnctl monitor send-test --secret-file FILE --url URL [--event TYPE]")
+		return usagef("usage: dartctl monitor send-test --secret-file FILE --url URL [--event TYPE]")
 	}
 	u, err := url.Parse(target)
 	if err != nil || (u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost" || u.Hostname() == "::1"))) {
@@ -97,13 +97,13 @@ func (e *env) sendTest(ctx context.Context, secretFile, target, event string) er
 	if err != nil {
 		return err
 	}
-	id := "evt_dnctltest" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	id := "evt_dartctltest" + strconv.FormatInt(time.Now().UnixNano(), 36)
 	if !eventType.MatchString(event) {
 		return usagef("--event must look like a DartNode event type, e.g. service.power.reboot")
 	}
 	body, err := json.Marshal(map[string]any{
 		"id": id, "type": event, "created_at": time.Now().UTC().Format(time.RFC3339),
-		"data": map[string]any{"hostname": "dnctl-test", "service_id": 0},
+		"data": map[string]any{"hostname": "dartctl-test", "service_id": 0},
 	})
 	if err != nil {
 		return err
@@ -114,7 +114,7 @@ func (e *env) sendTest(ctx context.Context, secretFile, target, event string) er
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "dnctl-send-test")
+	req.Header.Set("User-Agent", "dartctl-send-test")
 	req.Header.Set("X-DartNode-Event", event)
 	req.Header.Set("X-DartNode-Timestamp", ts)
 	req.Header.Set("X-DartNode-Signature", webhook.Header([]byte(secret), ts, body))

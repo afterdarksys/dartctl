@@ -1,4 +1,4 @@
-# HTTPS in front of the dnctl receiver. Caddy gets the certificate itself.
+# HTTPS in front of the dartctl receiver. Caddy gets the certificate itself.
 hooks.example.com {
 	handle /dartnode/webhook {
 		request_body {
