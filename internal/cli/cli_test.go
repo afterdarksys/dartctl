@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/afterdarksys/dartctl/internal/api"
 )
 
 const tok = "dnt_cli_test_token_123456"
@@ -37,6 +40,10 @@ func newFake(t *testing.T) *fake {
 		switch {
 		case r.Method == "GET" && r.URL.Path == "/v1/compute/7":
 			fmt.Fprint(w, `{"success":true,"data":{"id":7,"hostname":"web-1","status":"running","service_status":"active"}}`)
+		case r.Method == "GET" && (r.URL.Path == "/v1/compute/10003" || r.URL.Path == "/v1/compute/10003/config"):
+			// 10003 is a real-world block storage service, not compute: DartNode
+			// answers 200 success:false with no message.
+			fmt.Fprint(w, `{"success":false}`)
 		case r.Method == "GET" && r.URL.Path == "/v1/billing/balance":
 			fmt.Fprint(w, `{"success":true,"data":{"balance":-11.69,"currency":"USD"}}`)
 		case r.Method == "POST" && r.URL.Path == "/v1/webhooks":
@@ -214,6 +221,160 @@ func TestFindSecretStrict(t *testing.T) {
 		if got := findSecret(v); got != want {
 			t.Errorf("%s: got %q want %q", raw, got, want)
 		}
+	}
+}
+
+func TestComputeGetNotFoundAsCompute(t *testing.T) {
+	f := newFake(t)
+	for _, args := range [][]string{
+		{"compute", "get", "10003"},
+		{"compute", "config", "10003"},
+		{"power", "10003", "off", "--yes", "--confirm", "x"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			code, _, errw := run(f, args...)
+			if code == 0 {
+				t.Fatalf("command succeeded: %s", errw)
+			}
+			want := "instance 10003 was not found as a compute instance"
+			if !strings.Contains(errw, want) {
+				t.Fatalf("errw = %q, want substring %q", errw, want)
+			}
+		})
+	}
+}
+
+func TestNotFoundAsCompute(t *testing.T) {
+	cases := []struct {
+		name    string
+		err     error
+		changed bool
+	}{
+		{"200 generic success-false", &api.Error{Status: 200, Message: "request did not succeed"}, true},
+		{"200 with a real message", &api.Error{Status: 200, Message: "disk is full"}, false},
+		{"404", &api.Error{Status: 404, Message: "request did not succeed"}, false},
+		{"non-API error", errors.New("boom"), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := notFoundAsCompute(c.err, 42)
+			if !c.changed {
+				if got != c.err {
+					t.Fatalf("error rewritten: %v", got)
+				}
+				return
+			}
+			want := "instance 42 was not found as a compute instance"
+			if !strings.Contains(got.Error(), want) {
+				t.Fatalf("got %q, want substring %q", got.Error(), want)
+			}
+		})
+	}
+}
+
+func TestParseInvoiceItem(t *testing.T) {
+	cases := []struct {
+		desc      string
+		wantID    int
+		wantKind  string
+		wantName  string
+		wantAddon string
+		wantOK    bool
+	}{
+		{
+			desc:   "Service #10001 [VPS relay-a.example.net]",
+			wantID: 10001, wantKind: "VPS", wantName: "relay-a.example.net", wantOK: true,
+		},
+		{
+			desc:   "Service #10002 [VDS ns1.example.org]",
+			wantID: 10002, wantKind: "VDS", wantName: "ns1.example.org", wantOK: true,
+		},
+		{
+			desc:   "Service #10003 [Block Storage #7 (containers)]",
+			wantID: 10003, wantKind: "Block Storage", wantName: "#7 (containers)", wantOK: true,
+		},
+		{
+			desc:   "Addon backups [Service: #10001, VPS relay-a.example.net]",
+			wantID: 10001, wantKind: "VPS", wantName: "relay-a.example.net", wantAddon: "backups", wantOK: true,
+		},
+		{desc: "", wantOK: false},
+		{desc: "just some random invoice text", wantOK: false},
+		{desc: "Service #123 no brackets at all", wantOK: false},
+		{desc: "Service #abc [VPS x]", wantOK: false},
+		{desc: "Service #123 []", wantOK: false},
+		{desc: "Addon backups [Service: abc, VPS x]", wantOK: false},
+		{desc: "Addon backups [Service: #123]", wantOK: false},
+	}
+	for _, c := range cases {
+		t.Run(c.desc, func(t *testing.T) {
+			id, kind, name, addon, ok := parseInvoiceItem(c.desc)
+			if ok != c.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, c.wantOK)
+			}
+			if !ok {
+				return
+			}
+			if id != c.wantID || kind != c.wantKind || name != c.wantName || addon != c.wantAddon {
+				t.Fatalf("got (%d, %q, %q, %q), want (%d, %q, %q, %q)", id, kind, name, addon, c.wantID, c.wantKind, c.wantName, c.wantAddon)
+			}
+		})
+	}
+}
+
+func TestBillingServices(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+tok {
+			w.WriteHeader(401)
+			fmt.Fprint(w, `{"success":false,"message":"bad token"}`)
+			return
+		}
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/v1/billing/invoices" && r.URL.Query().Get("page") == "1":
+			fmt.Fprint(w, `{"success":true,"data":{"invoices":[
+				{"id":1,"status":"paid","total":12.5,"created_at":"2026-10-01T00:00:00Z"},
+				{"id":2,"status":"paid","total":30.0,"created_at":"2026-11-01T00:00:00Z"}
+			],"pagination":{"page":1,"per_page":100,"total":2,"total_pages":1}}}`)
+		case r.Method == "GET" && r.URL.Path == "/v1/billing/invoices/1":
+			fmt.Fprint(w, `{"success":true,"data":{"items":[
+				{"description":"Service #10001 [VPS relay-a.example.net]","amount":10,"quantity":1,"total":10},
+				{"description":"Service #10003 [Block Storage #7 (containers)]","amount":2.5,"quantity":1,"total":2.5}
+			]}}`)
+		case r.Method == "GET" && r.URL.Path == "/v1/billing/invoices/2":
+			fmt.Fprint(w, `{"success":true,"data":{"items":[
+				{"description":"Service #10001 [VPS relay-a.example.net]","amount":10,"quantity":1,"total":10},
+				{"description":"Addon backups [Service: #10001, VPS relay-a.example.net]","amount":5,"quantity":1,"total":5},
+				{"description":"some unrelated line item","amount":1,"quantity":1,"total":1}
+			]}}`)
+		default:
+			fmt.Fprint(w, `{"success":true,"data":{"ok":true}}`)
+		}
+	}))
+	defer srv.Close()
+	var out, errw bytes.Buffer
+	e := &env{out: &out, errw: &errw, apiBase: srv.URL + "/v1", getenv: func(k string) string {
+		if k == "DARTNODE_TOKEN" {
+			return tok
+		}
+		return ""
+	}}
+	if err := e.billing(context.Background(), []string{"services"}); err != nil {
+		t.Fatalf("billing services: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "10001") || !strings.Contains(got, "VPS") || !strings.Contains(got, "relay-a.example.net") {
+		t.Fatalf("missing VPS service in output: %q", got)
+	}
+	if !strings.Contains(got, "backups") {
+		t.Fatalf("missing addon in output: %q", got)
+	}
+	if !strings.Contains(got, "2026-11-01") {
+		t.Fatalf("missing newest invoice date (10001 was on both invoices) in output: %q", got)
+	}
+	if !strings.Contains(got, "10003") || !strings.Contains(got, "Block Storage") || !strings.Contains(got, "#7 (containers)") {
+		t.Fatalf("missing block storage service in output: %q", got)
+	}
+	if strings.Contains(got, "unrelated") {
+		t.Fatalf("junk line leaked into output: %q", got)
 	}
 }
 

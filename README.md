@@ -58,6 +58,7 @@ dartctl compute get 123
 dartctl ips list
 dartctl billing balance            # shows credit or the amount owed
 dartctl billing invoices --open    # everything that is not paid or refunded
+dartctl billing services           # VPS/VDS/block storage and addons, from invoice line items
 dartctl webhooks list
 dartctl --json compute list        # raw JSON for scripts
 ```

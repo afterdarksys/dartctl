@@ -12,6 +12,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -32,7 +34,7 @@ Read:
   compute list [--status S]             instances (status: active, suspended, pending, terminated)
   compute get <id> | config <id>        one instance / its configuration
   ips list | get <ip>                   IP addresses and reverse DNS
-  billing invoices [--open] | invoice <id> | balance
+  billing invoices [--open] | invoice <id> | balance | services
   deploy plans | regions | os-templates | estimate <deploy flags>
   webhooks list [--url URL] | get <id> | events
 
@@ -303,7 +305,7 @@ func (e *env) compute(ctx context.Context, args []string) error {
 		if args[0] == "config" {
 			path += "/config"
 		}
-		return e.raw(ctx, path, nil)
+		return notFoundAsCompute(e.raw(ctx, path, nil), id)
 	}
 	return usagef("usage: dartctl compute list|get|config")
 }
@@ -355,7 +357,7 @@ func validIP(s string) bool {
 
 func (e *env) billing(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return usagef("usage: dartctl billing invoices|invoice <id>|balance")
+		return usagef("usage: dartctl billing invoices|invoice <id>|balance|services")
 	}
 	f := newFlags("billing")
 	open := f.fs.Bool("open", false, "")
@@ -411,8 +413,151 @@ func (e *env) billing(ctx context.Context, args []string) error {
 				fmt.Fprintf(w, "owed\t%.2f %s\n", b.Balance, b.Currency)
 			}
 		})
+	case "services":
+		invoices, err := c.AllInvoices(ctx)
+		if err != nil {
+			return err
+		}
+		items := make(map[int][]string, len(invoices))
+		for _, inv := range invoices {
+			var detail struct {
+				Items []struct {
+					Description string `json:"description"`
+				} `json:"items"`
+			}
+			if err := c.Do(ctx, "GET", "/billing/invoices/"+strconv.Itoa(inv.ID), nil, nil, &detail); err != nil {
+				return err
+			}
+			descs := make([]string, 0, len(detail.Items))
+			for _, it := range detail.Items {
+				descs = append(descs, it.Description)
+			}
+			items[inv.ID] = descs
+		}
+		services := buildServices(invoices, items)
+		return e.print(services, func(w *tabwriter.Writer) {
+			fmt.Fprintln(w, "ID\tTYPE\tNAME\tADDONS\tLAST INVOICED")
+			for _, s := range services {
+				fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n", s.ID, s.Type, s.Name, strings.Join(s.Addons, ","), s.LastInvoiced)
+			}
+		})
 	}
-	return usagef("usage: dartctl billing invoices|invoice <id>|balance")
+	return usagef("usage: dartctl billing invoices|invoice <id>|balance|services")
+}
+
+// Service is one real-world service inferred from invoice line items.
+// DartNode's /compute endpoint lists only VPS/VDS instances; block storage
+// and other service types appear only on invoices.
+type Service struct {
+	ID           int      `json:"id"`
+	Type         string   `json:"type"`
+	Name         string   `json:"name"`
+	Addons       []string `json:"addons"`
+	LastInvoiced string   `json:"last_invoiced"`
+}
+
+var (
+	serviceItemRE = regexp.MustCompile(`^Service #(\d+) \[(.+)\]$`)
+	addonItemRE   = regexp.MustCompile(`^Addon (\S+) \[Service: #(\d+), (.+)\]$`)
+)
+
+// parseInvoiceItem extracts the service one invoice line-item description
+// refers to. DartNode's invoice descriptions aren't a documented schema, so
+// this recognizes only the shapes it is known to send:
+//
+//	Service #10001 [VPS relay-a.example.net]
+//	Service #10003 [Block Storage #7 (containers)]
+//	Addon backups [Service: #10001, VPS relay-a.example.net]
+//
+// Anything else reports ok=false so the caller ignores the line rather than
+// guessing at it.
+func parseInvoiceItem(desc string) (id int, kind, name, addon string, ok bool) {
+	if m := serviceItemRE.FindStringSubmatch(desc); m != nil {
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			return 0, "", "", "", false
+		}
+		kind, name = splitKindName(m[2])
+		if kind == "" {
+			return 0, "", "", "", false
+		}
+		return n, kind, name, "", true
+	}
+	if m := addonItemRE.FindStringSubmatch(desc); m != nil {
+		n, err := strconv.Atoi(m[2])
+		if err != nil {
+			return 0, "", "", "", false
+		}
+		kind, name = splitKindName(m[3])
+		if kind == "" {
+			return 0, "", "", "", false
+		}
+		return n, kind, name, m[1], true
+	}
+	return 0, "", "", "", false
+}
+
+// splitKindName splits "VPS relay-a.example.net" into ("VPS",
+// "relay-a.example.net"), special-casing "Block Storage" as the one kind
+// DartNode spells with two words.
+func splitKindName(s string) (kind, name string) {
+	if rest, ok := strings.CutPrefix(s, "Block Storage "); ok {
+		return "Block Storage", rest
+	}
+	if i := strings.IndexByte(s, ' '); i >= 0 {
+		return s[:i], s[i+1:]
+	}
+	return s, ""
+}
+
+// buildServices aggregates services from every invoice's line items.
+// itemsByInvoice holds each invoice's line-item descriptions, keyed by
+// invoice ID. Unparseable lines are ignored. The result is sorted by ID.
+func buildServices(invoices []api.Invoice, itemsByInvoice map[int][]string) []Service {
+	type build struct {
+		Service
+		newest string
+		addons map[string]bool
+	}
+	byID := map[int]*build{}
+	for _, inv := range invoices {
+		for _, desc := range itemsByInvoice[inv.ID] {
+			id, kind, name, addon, ok := parseInvoiceItem(desc)
+			if !ok {
+				continue
+			}
+			b := byID[id]
+			if b == nil {
+				b = &build{Service: Service{ID: id}, addons: map[string]bool{}}
+				byID[id] = b
+			}
+			if kind != "" {
+				b.Type = kind
+			}
+			if name != "" {
+				b.Name = name
+			}
+			if addon != "" {
+				b.addons[addon] = true
+			}
+			if inv.CreatedAt > b.newest {
+				b.newest = inv.CreatedAt
+			}
+		}
+	}
+	out := make([]Service, 0, len(byID))
+	for _, b := range byID {
+		addons := make([]string, 0, len(b.addons))
+		for a := range b.addons {
+			addons = append(addons, a)
+		}
+		sort.Strings(addons)
+		b.Service.Addons = addons
+		b.Service.LastInvoiced = short(b.newest)
+		out = append(out, b.Service)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
 }
 
 func short(ts string) string {
@@ -422,11 +567,24 @@ func short(ts string) string {
 	return ts
 }
 
+// notFoundAsCompute rewrites DartNode's generic "200 success:false, no
+// message" error into one that says what actually went wrong: the id is not
+// a compute instance (DartNode's /compute endpoints 200 this way for ids
+// that belong to another service type, such as block storage). Any other
+// error is returned unchanged.
+func notFoundAsCompute(err error, id int) error {
+	var apiErr *api.Error
+	if errors.As(err, &apiErr) && apiErr.Status == 200 && apiErr.Message == "request did not succeed" {
+		return fmt.Errorf("instance %d was not found as a compute instance (DartNode block storage and other services are not compute; see dartctl billing services)", id)
+	}
+	return err
+}
+
 // confirmService fetches the instance and checks --confirm against its hostname.
 func confirmService(ctx context.Context, c *api.Client, id int, confirm, action string) (api.Instance, error) {
 	in, err := c.Instance(ctx, id)
 	if err != nil {
-		return in, err
+		return in, notFoundAsCompute(err, id)
 	}
 	if confirm == "" {
 		return in, usagef("%s on %s (%d) is destructive: add --confirm %s", action, in.Hostname, id, in.Hostname)
