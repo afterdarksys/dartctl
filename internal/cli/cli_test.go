@@ -3,7 +3,9 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -165,5 +167,78 @@ func TestReadsWork(t *testing.T) {
 	f := newFake(t)
 	if code, out, errw := run(f, "billing", "balance"); code != 0 || !strings.Contains(out, "credit") || !strings.Contains(out, "11.69") {
 		t.Fatalf("code %d out %q err %q", code, out, errw)
+	}
+}
+
+func TestTokenFileBeatsEnvironment(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "tok")
+	os.WriteFile(p, []byte("dnt_from_file_0123456789"), 0o600)
+	e := &env{tokenFile: p, getenv: func(k string) string {
+		if k == "DARTNODE_TOKEN" {
+			return "dnt_from_env_0123456789"
+		}
+		return ""
+	}}
+	if _, err := e.client(); err != nil {
+		t.Fatal(err)
+	}
+	// The flag's file must be the one used: a bad file must fail even with a good env token.
+	os.WriteFile(p, []byte("not-a-token"), 0o600)
+	if _, err := e.client(); err == nil {
+		t.Fatal("environment token silently replaced --token-file")
+	}
+}
+
+func TestGlobalsStopAtCommand(t *testing.T) {
+	e := &env{getenv: func(string) string { return "" }}
+	rest, err := e.globals([]string{"--json", "webhooks", "update", "5", "--name", "version", "--api", "x", "--yes"})
+	if err != nil || e.apiBase != "" || len(rest) != 8 || rest[0] != "webhooks" {
+		t.Fatalf("rest=%v api=%q err=%v", rest, e.apiBase, err)
+	}
+}
+
+func TestFindSecretStrict(t *testing.T) {
+	cases := map[string]string{
+		`{"secret":"plain"}`:                               "plain",
+		`{"webhook":{"id":1,"secret":"plain"}}`:            "plain",
+		`{"secret_hash":"abc","secret":"plain"}`:           "plain",
+		`{"secret_hash":"abc"}`:                            "",
+		`{"webhook":{"deliveries":[{"secret":"nested"}]}}`: "",
+	}
+	for raw, want := range cases {
+		var v any
+		if err := json.Unmarshal([]byte(raw), &v); err != nil {
+			t.Fatal(err)
+		}
+		if got := findSecret(v); got != want {
+			t.Errorf("%s: got %q want %q", raw, got, want)
+		}
+	}
+}
+
+func TestSendTest(t *testing.T) {
+	var got []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, _ = io.ReadAll(r.Body)
+	}))
+	defer srv.Close()
+	p := filepath.Join(t.TempDir(), "s")
+	os.WriteFile(p, []byte("secret"), 0o600)
+	e := &env{out: io.Discard, errw: io.Discard, getenv: func(string) string { return "" }}
+	if err := e.sendTest(context.Background(), p, srv.URL+"/h", "service.power.reboot"); err != nil {
+		t.Fatalf("send-test: %v", err)
+	}
+	var v map[string]any
+	if err := json.Unmarshal(got, &v); err != nil || v["type"] != "service.power.reboot" {
+		t.Fatalf("body %q: %v", got, err)
+	}
+	for _, bad := range []string{"", "weird\x01type", `a"b.c`, "noDot", "UPPER.case"} {
+		if err := e.sendTest(context.Background(), p, srv.URL+"/h", bad); err == nil {
+			t.Errorf("event %q accepted", bad)
+		}
+	}
+	if err := e.sendTest(context.Background(), p, "http://example.com/h", "service.power.reboot"); err == nil {
+		t.Error("plain http to a non-loopback host accepted")
 	}
 }

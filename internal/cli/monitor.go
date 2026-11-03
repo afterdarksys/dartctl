@@ -3,11 +3,13 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -52,6 +54,7 @@ func (e *env) monitor(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
+		defer st.Close()
 		open, err := monitor.CheckOnce(ctx, cfg, d, st, time.Now())
 		if open == nil {
 			open = []monitor.Alert{}
@@ -78,6 +81,8 @@ func (e *env) monitor(ctx context.Context, args []string) error {
 	return usagef("usage: dnctl monitor check|serve|test-alert|send-test")
 }
 
+var eventType = regexp.MustCompile(`^[a-z0-9_]+(\.[a-z0-9_]+){1,4}$`)
+
 // sendTest posts a correctly signed sample delivery to a receiver, so an
 // operator can prove the whole path before registering with DartNode.
 func (e *env) sendTest(ctx context.Context, secretFile, target, event string) error {
@@ -93,7 +98,16 @@ func (e *env) sendTest(ctx context.Context, secretFile, target, event string) er
 		return err
 	}
 	id := "evt_dnctltest" + strconv.FormatInt(time.Now().UnixNano(), 36)
-	body := []byte(fmt.Sprintf(`{"id":%q,"type":%q,"created_at":%q,"data":{"hostname":"dnctl-test","service_id":0}}`, id, event, time.Now().UTC().Format(time.RFC3339)))
+	if !eventType.MatchString(event) {
+		return usagef("--event must look like a DartNode event type, e.g. service.power.reboot")
+	}
+	body, err := json.Marshal(map[string]any{
+		"id": id, "type": event, "created_at": time.Now().UTC().Format(time.RFC3339),
+		"data": map[string]any{"hostname": "dnctl-test", "service_id": 0},
+	})
+	if err != nil {
+		return err
+	}
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {

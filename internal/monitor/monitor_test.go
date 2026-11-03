@@ -5,8 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -150,19 +152,19 @@ func TestDispatcherMinSeverity(t *testing.T) {
 func TestTransition(t *testing.T) {
 	t0 := time.Unix(1_800_000_000, 0)
 	a := Alert{Key: "host:x:power", Severity: Critical, Title: "x stopped"}
-	send, state := Transition(nil, []Alert{a}, t0)
+	send, state := Transition(nil, []Alert{a}, nil, t0)
 	if len(send) != 1 {
 		t.Fatalf("new finding not sent: %d", len(send))
 	}
-	send, state = Transition(state, []Alert{a}, t0.Add(time.Hour))
+	send, state = Transition(state, []Alert{a}, nil, t0.Add(time.Hour))
 	if len(send) != 0 {
 		t.Fatalf("unchanged finding re-sent: %d", len(send))
 	}
-	send, state = Transition(state, []Alert{a}, t0.Add(25*time.Hour))
+	send, state = Transition(state, []Alert{a}, nil, t0.Add(25*time.Hour))
 	if len(send) != 1 {
 		t.Fatal("no daily reminder for open critical")
 	}
-	send, state = Transition(state, nil, t0.Add(26*time.Hour))
+	send, state = Transition(state, nil, nil, t0.Add(26*time.Hour))
 	if len(send) != 1 || !send[0].Resolved || len(state) != 0 {
 		t.Fatalf("resolution not sent: %+v", send)
 	}
@@ -197,7 +199,7 @@ func TestReconcile(t *testing.T) {
 		t.Fatal(err)
 	}
 	min := 10.0
-	got := Reconcile(context.Background(), c, Expect{Hosts: []string{"web-1", "db-1", "gone-1"}, AlertNewHosts: true, MinCredit: &min, WebhookID: 9}, time.Now())
+	got, _ := Reconcile(context.Background(), c, Expect{Hosts: []string{"web-1", "db-1", "gone-1"}, AlertNewHosts: true, MinCredit: &min, WebhookID: 9}, time.Now())
 	keys := map[string]Severity{}
 	for _, a := range got {
 		keys[a.Key] = a.Severity
@@ -270,5 +272,108 @@ func TestCheckOnceCancelledReportsNothing(t *testing.T) {
 	}
 	if f, _ := st.Findings(); len(f) != 0 {
 		t.Fatalf("cancelled pass saved findings: %v", f)
+	}
+}
+
+func TestServeReturnsWhenListenFails(t *testing.T) {
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer busy.Close()
+	dir := t.TempDir()
+	atomicWrite(dir+"/tok", []byte("dnt_serve_test_token"))
+	atomicWrite(dir+"/secret", []byte("s3cret"))
+	cfg := &Config{TokenFile: dir + "/tok", StateDir: dir + "/state", Listen: busy.Addr().String(), Path: "/h", SecretFile: dir + "/secret", APIBase: "http://127.0.0.1:1/v1"}
+	d := &Dispatcher{Log: func(string, ...any) {}}
+	d.Add(&memSink{}, Info)
+	done := make(chan error, 1)
+	go func() { done <- Serve(context.Background(), cfg, d, func(string, ...any) {}) }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Serve returned nil on a port conflict")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Serve kept running without a receiver")
+	}
+}
+
+func TestOutageDoesNotResolveFindings(t *testing.T) {
+	t0 := time.Unix(1_800_000_000, 0)
+	_, state := Transition(nil, []Alert{{Key: "host:web-1:missing", Severity: Critical, Title: "gone"}}, nil, t0)
+	outage := []Alert{{Key: "api:compute", Severity: Critical, Title: "cannot list"}}
+	send, state := Transition(state, outage, []string{"host:"}, t0.Add(time.Minute))
+	for _, a := range send {
+		if a.Resolved {
+			t.Fatalf("outage reported %s resolved", a.Key)
+		}
+	}
+	if _, ok := state["host:web-1:missing"]; !ok {
+		t.Fatal("finding dropped during outage")
+	}
+}
+
+type pickySink struct{ got []string }
+
+func (p *pickySink) Name() string { return "picky" }
+func (p *pickySink) Send(_ context.Context, a Alert) error {
+	if strings.Contains(a.Title, "poison") {
+		return errors.New("400 rejected")
+	}
+	p.got = append(p.got, a.Key)
+	return nil
+}
+
+func TestPoisonEventDoesNotBlockInbox(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	rc, st, secret := newReceiver(t, now)
+	bad := []byte(`{"id":"evt_bad","type":"service.poison","data":{}}`)
+	good := []byte(`{"id":"evt_good","type":"invoice.paid","data":{}}`)
+	post(rc, http.MethodPost, "/hook", bad, signed(secret, now, bad, "service.poison"))
+	post(rc, http.MethodPost, "/hook", good, signed(secret, now.Add(time.Second), good, "invoice.paid"))
+	sink := &pickySink{}
+	d := &Dispatcher{Log: func(string, ...any) {}}
+	d.Add(sink, Info)
+	if err := DrainInbox(context.Background(), st, d, now); err == nil {
+		t.Fatal("failure not reported")
+	}
+	if len(sink.got) != 1 || sink.got[0] != "event:evt_good" {
+		t.Fatalf("good event blocked behind poison: %v", sink.got)
+	}
+	// A day later the poison event is quarantined, not retried forever.
+	DrainInbox(context.Background(), st, d, now.Add(QuarantineAfter+time.Hour))
+	if p, _ := st.Pending(); len(p) != 0 {
+		t.Fatalf("poison event still pending: %d", len(p))
+	}
+}
+
+func TestStoreLockedAgainstSecondProcess(t *testing.T) {
+	dir := t.TempDir() + "/state"
+	a, err := OpenStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	if b, err := OpenStore(dir); err == nil {
+		b.Close()
+		t.Fatal("second store opened on a locked state_dir")
+	}
+}
+
+func TestReceiverStoreFailureIs503(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	rc, st, secret := newReceiver(t, now)
+	os.Chmod(st.dir+"/inbox", 0o500)
+	defer os.Chmod(st.dir+"/inbox", 0o700)
+	body := []byte(`{"id":"evt_ro","type":"invoice.paid","data":{}}`)
+	if c := post(rc, http.MethodPost, "/hook", body, signed(secret, now, body, "invoice.paid")); c != 503 {
+		t.Fatalf("store failure answered %d, want 503 so DartNode retries", c)
+	}
+}
+
+func TestInboxIDsDifferingInCaseStayDistinct(t *testing.T) {
+	if inboxName("evt_Abc") == inboxName("evt_abc") {
+		t.Fatal("case-folded collision")
 	}
 }

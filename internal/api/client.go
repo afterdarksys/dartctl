@@ -35,7 +35,7 @@ type Client struct {
 	UserAgent  string
 	MaxRetries int                 // retries for rate-limited idempotent requests
 	MaxWait    time.Duration       // longest single rate-limit wait
-	Sleep      func(time.Duration) // replaceable in tests
+	Sleep      func(time.Duration) // tests only; nil waits on a timer that honours ctx
 }
 
 // Error is a DartNode error response. It never contains the token.
@@ -81,11 +81,10 @@ func New(base, token string) (*Client, error) {
 	return &Client{
 		base:       u,
 		token:      token,
-		HTTP:       &http.Client{Timeout: 30 * time.Second, CheckRedirect: refuseRedirect},
+		HTTP:       &http.Client{Timeout: 30 * time.Second, Transport: Transport(), CheckRedirect: refuseRedirect},
 		UserAgent:  "dnctl",
 		MaxRetries: 3,
 		MaxWait:    60 * time.Second,
-		Sleep:      time.Sleep,
 	}, nil
 }
 
@@ -148,12 +147,17 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 		if wait > c.MaxWait {
 			wait = c.MaxWait
 		}
+		if c.Sleep != nil {
+			c.Sleep(wait)
+			continue
+		}
+		t := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
+			t.Stop()
 			return ctx.Err()
-		default:
+		case <-t.C:
 		}
-		c.Sleep(wait)
 	}
 }
 

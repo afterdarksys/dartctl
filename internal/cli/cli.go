@@ -34,7 +34,7 @@ Read:
   ips list | get <ip>                   IP addresses and reverse DNS
   billing invoices [--open] | invoice <id> | balance
   deploy plans | regions | os-templates | estimate <deploy flags>
-  webhooks list | get <id> | events
+  webhooks list [--url URL] | get <id> | events
 
 Change (every change needs --yes; destructive ones also --confirm):
   power <id> on|shutdown|reboot-hard|off      off and reboot-hard need --confirm <hostname>
@@ -54,9 +54,9 @@ Monitor:
   monitor test-alert --config FILE      send a test alert to every sink
   monitor send-test --secret-file F --url URL [--event T]   signed sample delivery to your receiver
 
-Global flags:
-  --token-file FILE   API token file (mode 600). Default: $DARTNODE_TOKEN, then
-                      $DNCTL_TOKEN_FILE, then ~/.config/dnctl/token
+Global flags (before the command):
+  --token-file FILE   API token file (mode 600). Without it: $DARTNODE_TOKEN,
+                      then $DNCTL_TOKEN_FILE, then ~/.config/dnctl/token
   --api URL           API base (default https://api.dartnode.net/v1)
   --json              print raw JSON
 
@@ -113,7 +113,6 @@ func (e exitError) Error() string { return "exit " + strconv.Itoa(int(e)) }
 func usagef(f string, a ...any) error { return usageError(fmt.Sprintf(f, a...)) }
 
 func (e *env) globals(args []string) ([]string, error) {
-	var rest []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
@@ -135,17 +134,27 @@ func (e *env) globals(args []string) ([]string, error) {
 			e.apiBase = strings.TrimPrefix(a, "--api=")
 		case a == "--token" || strings.HasPrefix(a, "--token="):
 			return nil, errors.New("--token is not accepted: put the token in a mode-600 file and pass --token-file, or set DARTNODE_TOKEN")
-		case a == "--version" || a == "version":
+		case a == "--version":
 			return []string{"version"}, nil
+		case strings.HasPrefix(a, "-"):
+			return nil, usagef("unknown global flag %s (global flags go before the command)", a)
 		default:
-			rest = append(rest, a)
+			// The command word: everything from here belongs to the command.
+			return args[i:], nil
 		}
 	}
-	return rest, nil
+	return nil, nil
 }
 
+// client resolves the token: --token-file, then $DARTNODE_TOKEN, then
+// $DNCTL_TOKEN_FILE, then ~/.config/dnctl/token. An explicit flag always wins,
+// so a stray environment variable can never redirect a change to another
+// account.
 func (e *env) client() (*api.Client, error) {
-	tok := strings.TrimSpace(e.getenv("DARTNODE_TOKEN"))
+	var tok string
+	if e.tokenFile == "" {
+		tok = strings.TrimSpace(e.getenv("DARTNODE_TOKEN"))
+	}
 	if tok == "" {
 		path := e.tokenFile
 		if path == "" {
@@ -614,24 +623,22 @@ func (e *env) deploy(ctx context.Context, args []string) error {
 	return e.print(data, nil)
 }
 
-// findSecret looks for the webhook signing secret in a create response,
-// whatever shape DartNode wraps it in.
+// findSecret returns the plain signing secret from a webhook create response:
+// data.secret, or data.webhook.secret. It never falls back to a hash field or
+// a random nested value, because saving the wrong value makes every delivery
+// fail verification until DartNode disables the webhook.
 func findSecret(v any) string {
-	switch t := v.(type) {
-	case map[string]any:
-		for _, k := range []string{"secret", "signing_secret", "secret_hash"} {
-			if s, ok := t[k].(string); ok && s != "" {
-				return s
-			}
+	top, ok := v.(map[string]any)
+	if !ok {
+		return ""
+	}
+	for _, obj := range []any{top, top["webhook"]} {
+		m, ok := obj.(map[string]any)
+		if !ok {
+			continue
 		}
-		for _, child := range t {
-			if s := findSecret(child); s != "" {
-				return s
-			}
-		}
-	case []any:
-		for _, child := range t {
-			if s := findSecret(child); s != "" {
+		for _, k := range []string{"secret", "signing_secret"} {
+			if s, ok := m[k].(string); ok && s != "" {
 				return s
 			}
 		}
@@ -703,6 +710,16 @@ func (e *env) webhooks(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
+		if *hookURL != "" {
+			// Exact match on the decoded URL; scripts use this to avoid duplicates.
+			kept := list[:0]
+			for _, h := range list {
+				if h.URL == *hookURL {
+					kept = append(kept, h)
+				}
+			}
+			list = kept
+		}
 		raws := make([]json.RawMessage, len(list))
 		for i, w := range list {
 			raws[i] = w.Raw
@@ -757,7 +774,7 @@ func (e *env) webhooks(ctx context.Context, args []string) error {
 		}
 		secret := findSecret(data)
 		if secret == "" {
-			return errors.New("webhook created, but the response held no signing secret; delete it and retry, or read the secret in the DartNode dashboard")
+			return errors.New("webhook created, but the response held no plain signing secret (data.secret); check it in the DartNode dashboard, or delete the webhook and report the response shape")
 		}
 		if err := secretfile.WriteNew(*secretOut, secret); err != nil {
 			return fmt.Errorf("webhook created but saving its secret failed (%v); delete the webhook and create it again", err)

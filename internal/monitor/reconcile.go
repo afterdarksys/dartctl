@@ -20,9 +20,12 @@ type Expect struct {
 }
 
 // Reconcile reads the account and returns every open finding. Read errors are
-// findings too, so a broken token or API outage is reported, not hidden.
-func Reconcile(ctx context.Context, c *api.Client, ex Expect, now time.Time) []Alert {
+// findings too, so a broken token or API outage is reported, not hidden. It
+// also returns the key prefixes it could not evaluate this pass; Transition
+// keeps their earlier findings open instead of reporting them resolved.
+func Reconcile(ctx context.Context, c *api.Client, ex Expect, now time.Time) ([]Alert, []string) {
 	var out []Alert
+	var unevaluated []string
 	add := func(key string, sev Severity, title, detail string) {
 		out = append(out, Alert{Key: key, Severity: sev, Level: sev.String(), Title: title, Detail: detail, Source: "reconcile", Time: now})
 	}
@@ -30,6 +33,7 @@ func Reconcile(ctx context.Context, c *api.Client, ex Expect, now time.Time) []A
 	instances, err := c.Instances(ctx, "")
 	if err != nil {
 		add("api:compute", Critical, "DartNode API: cannot list instances", err.Error())
+		unevaluated = append(unevaluated, "host:")
 	} else {
 		byHost := map[string]api.Instance{}
 		for _, in := range instances {
@@ -62,6 +66,7 @@ func Reconcile(ctx context.Context, c *api.Client, ex Expect, now time.Time) []A
 	invoices, err := c.AllInvoices(ctx)
 	if err != nil {
 		add("api:invoices", Critical, "DartNode API: cannot list invoices", err.Error())
+		unevaluated = append(unevaluated, "invoice:")
 	} else {
 		for _, inv := range invoices {
 			if inv.Status == "paid" || inv.Status == "refunded" {
@@ -78,6 +83,7 @@ func Reconcile(ctx context.Context, c *api.Client, ex Expect, now time.Time) []A
 	bal, err := c.Balance(ctx)
 	if err != nil {
 		add("api:balance", Critical, "DartNode API: cannot read balance", err.Error())
+		unevaluated = append(unevaluated, "balance:")
 	} else {
 		credit := -bal.Balance
 		if bal.Balance > 0 {
@@ -91,6 +97,7 @@ func Reconcile(ctx context.Context, c *api.Client, ex Expect, now time.Time) []A
 		ips, err := c.IPs(ctx)
 		if err != nil {
 			add("api:ips", Critical, "DartNode API: cannot list IPs", err.Error())
+			unevaluated = append(unevaluated, "ip:")
 		} else {
 			have := map[string]bool{}
 			for _, ip := range ips {
@@ -113,6 +120,7 @@ func Reconcile(ctx context.Context, c *api.Client, ex Expect, now time.Time) []A
 			add("webhook:missing", Critical, fmt.Sprintf("DartNode webhook %d no longer exists", ex.WebhookID), "events are not being delivered")
 		case err != nil:
 			add("api:webhook", Warning, "DartNode API: cannot read webhook", err.Error())
+			unevaluated = append(unevaluated, "webhook:")
 		default:
 			if disabled, known := api.WebhookDisabled(w); known && disabled {
 				add("webhook:disabled", Critical, fmt.Sprintf("DartNode webhook %d is disabled", ex.WebhookID), "DartNode disables a webhook after 10 failed deliveries; fix the receiver, then re-enable it")
@@ -121,7 +129,7 @@ func Reconcile(ctx context.Context, c *api.Client, ex Expect, now time.Time) []A
 	}
 
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
-	return out
+	return out, unevaluated
 }
 
 func pastDue(due string, now time.Time) bool {
@@ -136,7 +144,7 @@ const RemindEvery = 24 * time.Hour
 // alerts to send: new findings, severity changes, daily reminders for open
 // criticals, and a resolved notice for each finding that cleared. The caller
 // saves the returned state only after sending.
-func Transition(prev map[string]Finding, current []Alert, now time.Time) ([]Alert, map[string]Finding) {
+func Transition(prev map[string]Finding, current []Alert, unevaluated []string, now time.Time) ([]Alert, map[string]Finding) {
 	next := map[string]Finding{}
 	var send []Alert
 	for _, a := range current {
@@ -159,8 +167,21 @@ func Transition(prev map[string]Finding, current []Alert, now time.Time) ([]Aler
 		if _, still := next[key]; still {
 			continue
 		}
+		if hasAnyPrefix(key, unevaluated) {
+			next[key] = f // could not check this pass: still open, no news
+			continue
+		}
 		sev, _ := ParseSeverity(f.Severity)
 		send = append(send, Alert{Key: key, Severity: sev, Level: sev.String(), Title: f.Title, Detail: "cleared", Source: "reconcile", Resolved: true, Time: now})
 	}
 	return send, next
+}
+
+func hasAnyPrefix(key string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(key, p) {
+			return true
+		}
+	}
+	return false
 }

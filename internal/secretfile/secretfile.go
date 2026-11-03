@@ -10,6 +10,7 @@ package secretfile
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"strings"
@@ -36,18 +37,20 @@ func Read(path string) (string, error) {
 	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
 		return "", fmt.Errorf("%s is accessible by other users (mode %04o); run: chmod 600 %s", path, info.Mode().Perm(), path)
 	}
+	if err := ownerOK(info); err != nil {
+		return "", fmt.Errorf("%s: %w", path, err)
+	}
 	if info.Size() > MaxSize {
 		return "", fmt.Errorf("%s is larger than %d bytes", path, MaxSize)
 	}
-	buf := make([]byte, info.Size()+1)
-	n, err := f.Read(buf)
-	if err != nil && n == 0 && info.Size() > 0 {
+	buf, err := io.ReadAll(io.LimitReader(f, MaxSize+1))
+	if err != nil {
 		return "", fmt.Errorf("read secret file: %w", err)
 	}
-	if int64(n) > info.Size() {
-		return "", fmt.Errorf("%s grew while being read", path)
+	if len(buf) > MaxSize {
+		return "", fmt.Errorf("%s is larger than %d bytes", path, MaxSize)
 	}
-	value := strings.TrimSpace(string(buf[:n]))
+	value := strings.TrimSpace(string(buf))
 	if value == "" {
 		return "", fmt.Errorf("%s is empty", path)
 	}
@@ -65,13 +68,21 @@ func WriteNew(path, value string) error {
 	if err != nil {
 		return fmt.Errorf("create secret file: %w", err)
 	}
-	if _, err := f.WriteString(value + "\n"); err != nil {
+	// A half-written file would block a retry (O_EXCL), so remove it on failure.
+	fail := func(what string, err error) error {
 		f.Close()
-		return fmt.Errorf("write secret file: %w", err)
+		os.Remove(path)
+		return fmt.Errorf("%s secret file: %w", what, err)
+	}
+	if _, err := f.WriteString(value + "\n"); err != nil {
+		return fail("write", err)
 	}
 	if err := f.Sync(); err != nil {
-		f.Close()
-		return fmt.Errorf("sync secret file: %w", err)
+		return fail("sync", err)
 	}
-	return f.Close()
+	if err := f.Close(); err != nil {
+		os.Remove(path)
+		return fmt.Errorf("close secret file: %w", err)
+	}
+	return nil
 }

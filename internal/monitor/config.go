@@ -110,7 +110,7 @@ func CheckOnce(ctx context.Context, c *Config, d *Dispatcher, st *Store, now tim
 	if err != nil {
 		return nil, err
 	}
-	current := Reconcile(ctx, client, c.Expect, now)
+	current, unevaluated := Reconcile(ctx, client, c.Expect, now)
 	// A pass cut short by shutdown says nothing about the account: never turn
 	// "cancelled" into findings or alerts.
 	if err := ctx.Err(); err != nil {
@@ -120,7 +120,7 @@ func CheckOnce(ctx context.Context, c *Config, d *Dispatcher, st *Store, now tim
 	if err != nil {
 		return nil, err
 	}
-	send, next := Transition(prev, current, now)
+	send, next := Transition(prev, current, unevaluated, now)
 	for _, a := range send {
 		if err := d.Send(ctx, a); err != nil {
 			// Keep the previous state so the next pass retries this alert.
@@ -133,10 +133,13 @@ func CheckOnce(ctx context.Context, c *Config, d *Dispatcher, st *Store, now tim
 // Serve runs the webhook receiver (when configured) and the reconcile loop
 // until ctx is cancelled.
 func Serve(ctx context.Context, c *Config, d *Dispatcher, logf func(string, ...any)) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	st, err := OpenStore(c.StateDir)
 	if err != nil {
 		return err
 	}
+	defer st.Close()
 	every, _ := c.interval()
 	wake := make(chan struct{}, 1)
 	errc := make(chan error, 1)
@@ -162,10 +165,17 @@ func Serve(ctx context.Context, c *Config, d *Dispatcher, logf func(string, ...a
 			IdleTimeout:       60 * time.Second,
 			MaxHeaderBytes:    16 << 10,
 		}
+		// Bind before starting anything else, so a port conflict fails the
+		// process (and systemd restarts it) instead of running without a receiver.
+		ln, err := net.Listen("tcp", c.Listen)
+		if err != nil {
+			return fmt.Errorf("listen: %w", err)
+		}
 		go func() {
 			logf("receiver listening on %s%s", c.Listen, c.Path)
-			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				errc <- err
+				cancel()
 			}
 		}()
 		defer func() {
@@ -217,11 +227,13 @@ func Serve(ctx context.Context, c *Config, d *Dispatcher, logf func(string, ...a
 			}
 		}
 	}()
-	var runErr error
-	select {
-	case <-ctx.Done():
-	case runErr = <-errc:
-	}
+	<-ctx.Done()
+	cancel()
 	wg.Wait()
-	return runErr
+	select {
+	case err := <-errc:
+		return err
+	default:
+		return nil
+	}
 }

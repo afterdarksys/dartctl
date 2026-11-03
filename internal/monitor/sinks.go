@@ -3,7 +3,7 @@ package monitor
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/afterdarksys/dnctl/internal/api"
 	"github.com/afterdarksys/dnctl/internal/secretfile"
 )
 
@@ -36,7 +37,8 @@ type SinkConfig struct {
 }
 
 var sinkHTTP = &http.Client{
-	Timeout: 10 * time.Second,
+	Timeout:   10 * time.Second,
+	Transport: api.Transport(),
 	CheckRedirect: func(*http.Request, []*http.Request) error {
 		return errors.New("redirect refused")
 	},
@@ -115,11 +117,9 @@ type matrixSink struct {
 func (m matrixSink) Name() string { return "matrix" }
 
 func (m matrixSink) Send(ctx context.Context, a Alert) error {
-	txn := make([]byte, 16)
-	if _, err := rand.Read(txn); err != nil {
-		return err
-	}
-	u := m.homeserver + "/_matrix/client/v3/rooms/" + url.PathEscape(m.room) + "/send/m.room.message/" + hex.EncodeToString(txn)
+	// Same alert, same transaction ID: Matrix drops a retried duplicate.
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s|%d|%t", a.Key, a.Time.UnixNano(), a.Resolved)))
+	u := m.homeserver + "/_matrix/client/v3/rooms/" + url.PathEscape(m.room) + "/send/m.room.message/dnctl" + hex.EncodeToString(sum[:16])
 	return postJSON(ctx, http.MethodPut, u, m.token, map[string]string{"msgtype": "m.notice", "body": a.Text()}, "matrix")
 }
 

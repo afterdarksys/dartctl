@@ -63,3 +63,25 @@ func TestVerifyRejects(t *testing.T) {
 		})
 	}
 }
+
+func TestVerifyAcceptsUppercaseHex(t *testing.T) {
+	secret, ts, body, now := fixture()
+	sig := "v1=" + strings.ToUpper(strings.TrimPrefix(Header(secret, ts, body), "v1="))
+	if err := Verify([][]byte{secret}, ts, sig, body, now, DefaultTolerance); err != nil {
+		t.Fatalf("uppercase hex refused: %v", err)
+	}
+}
+
+func TestVerifyWindowEdges(t *testing.T) {
+	secret, ts, body, now := fixture()
+	sig := Header(secret, ts, body)
+	if err := Verify([][]byte{secret}, ts, sig, body, now.Add(DefaultTolerance), DefaultTolerance); err != nil {
+		t.Fatalf("edge of window refused: %v", err)
+	}
+	if err := Verify([][]byte{secret}, ts, sig, body, now.Add(DefaultTolerance+time.Second), DefaultTolerance); err != ErrStale {
+		t.Fatalf("just outside window: %v", err)
+	}
+	if err := Verify([][]byte{secret}, "+"+ts, sig, body, now, DefaultTolerance); err != ErrBadTimestamp {
+		t.Fatalf("plus-signed timestamp: %v", err)
+	}
+}

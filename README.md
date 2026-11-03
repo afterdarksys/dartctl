@@ -33,12 +33,14 @@ mkdir -p ~/.config/dnctl
 ```
 
 `dnctl` looks for the token in this order:
-1. `$DARTNODE_TOKEN`
-2. `--token-file FILE`
+1. `--token-file FILE`. When given, it always wins.
+2. `$DARTNODE_TOKEN`
 3. `$DNCTL_TOKEN_FILE`
 4. `~/.config/dnctl/token`
 
-It refuses token files that other users can read. There is deliberately no
+It refuses token files that other users can read, and files owned by anyone
+other than you or root. Global flags go before the command:
+`dnctl --json compute list`. There is deliberately no
 `--token` flag, because command-line arguments are visible to other processes
 and stay in shell history.
 
@@ -90,6 +92,9 @@ Without `--yes`, `deploy create` prints the price estimate and stops.
 - Stores each event before answering, so a crash never loses an
   acknowledged event.
 - During secret rotation, accepts both the current and the previous secret.
+- Delivers alerts from its own worker, so a slow reconcile pass never delays
+  them. An event no sink accepts for a day moves to `state_dir/inbox/failed/`
+  instead of blocking later ones.
 
 **Reconciler** (every `interval`, default 15 minutes) alerts when any of these
 holds:
@@ -102,7 +107,12 @@ holds:
   after 10 failed deliveries, so this check is what notices.
 
 It alerts on change: new, worse, and resolved findings. Open critical findings
-are re-sent daily.
+are re-sent daily. When part of the API cannot be read, the findings in that
+area stay open, and an API-error finding is raised instead of a false
+"resolved".
+
+One process owns a `state_dir` at a time; it is locked. Give `monitor check`
+its own `state_dir` if `monitor serve` is running.
 
 Run `dnctl monitor check --config monitor.json` for a single pass, from cron or
 CI. It exits 3 while a critical finding is open.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -89,31 +90,48 @@ func (rc *Receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // DrainInbox alerts every stored event and removes it once a sink accepted it.
-// An event whose alert fails stays in the inbox for the next pass.
+// A failed event stays for the next pass without blocking the others; after
+// QuarantineAfter it moves to inbox/failed so the operator can look at it.
 func DrainInbox(ctx context.Context, st *Store, d *Dispatcher, now time.Time) error {
-	paths, err := st.Pending()
+	items, err := st.Pending()
 	if err != nil {
 		return err
 	}
-	for _, p := range paths {
-		raw, err := os.ReadFile(p)
+	var failed int
+	var last error
+	for _, it := range items {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		raw, err := os.ReadFile(it.Path)
 		if err != nil {
-			return err
+			failed, last = failed+1, err
+			continue
 		}
 		var e Event
 		if err := json.Unmarshal(raw, &e); err != nil {
-			d.Log("dropping unreadable inbox file %s", p)
-			if err := st.Done(p); err != nil {
-				return err
+			d.Log("quarantining unreadable inbox file %s", it.Path)
+			if err := st.Quarantine(it.Path); err != nil {
+				failed, last = failed+1, err
 			}
 			continue
 		}
 		if err := d.Send(ctx, AlertForEvent(e, now)); err != nil {
-			return err
+			failed, last = failed+1, err
+			if now.Sub(it.Accepted) > QuarantineAfter {
+				d.Log("event %s undeliverable for %s; moved to inbox/failed", e.ID, QuarantineAfter)
+				if qerr := st.Quarantine(it.Path); qerr != nil {
+					last = qerr
+				}
+			}
+			continue
 		}
-		if err := st.Done(p); err != nil {
-			return err
+		if err := st.Done(it.Path); err != nil {
+			failed, last = failed+1, err
 		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d inbox event(s) not delivered: %w", failed, last)
 	}
 	return nil
 }

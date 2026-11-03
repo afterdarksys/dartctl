@@ -46,7 +46,7 @@ if [ "$code" != 200 ]; then
 fi
 
 echo "3/5 checking for an existing webhook on this URL"
-if dnctl --json webhooks list | grep -F "\"$url\"" >/dev/null 2>&1; then
+if [ "$(dnctl --json webhooks list --url "$url")" != "[]" ]; then
   die "a webhook already points at $url (dnctl webhooks list); delete it first or use another URL"
 fi
 

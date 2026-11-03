@@ -3,8 +3,11 @@
 #          -v /etc/dnctl:/etc/dnctl:ro -v dnctl-state:/var/lib/dnctl \
 #          -p 127.0.0.1:8787:8787 dnctl
 # Set "listen": "0.0.0.0:8787" in monitor.json inside a container, and keep
-# the published port on loopback behind your HTTPS proxy.
-FROM golang:1.22-alpine AS build
+# the published port on loopback behind your HTTPS proxy. The image runs as
+# uid 65532: the mounted secret files must be mode 600 and owned by 65532 (or
+# run with --user matching their owner), or dnctl refuses to read them.
+# For reproducible builds, pin both base images by digest (@sha256:...).
+FROM golang:1.27-alpine AS build
 WORKDIR /src
 COPY go.mod ./
 COPY cmd ./cmd

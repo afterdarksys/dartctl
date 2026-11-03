@@ -2,7 +2,7 @@
 hooks.example.com {
 	handle /dartnode/webhook {
 		request_body {
-			max_size 64KB
+			max_size 64KiB
 		}
 		reverse_proxy 127.0.0.1:8787
 	}
