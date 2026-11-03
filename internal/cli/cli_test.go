@@ -297,6 +297,10 @@ func TestParseInvoiceItem(t *testing.T) {
 			desc:   "Addon backups [Service: #10001, VPS relay-a.example.net]",
 			wantID: 10001, wantKind: "VPS", wantName: "relay-a.example.net", wantAddon: "backups", wantOK: true,
 		},
+		{
+			desc:   "Service #10004 [Ryzen VPS builder1.example.com]",
+			wantID: 10004, wantKind: "Ryzen VPS", wantName: "builder1.example.com", wantOK: true,
+		},
 		{desc: "", wantOK: false},
 		{desc: "just some random invoice text", wantOK: false},
 		{desc: "Service #123 no brackets at all", wantOK: false},

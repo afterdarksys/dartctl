@@ -504,6 +504,10 @@ func splitKindName(s string) (kind, name string) {
 	if rest, ok := strings.CutPrefix(s, "Block Storage "); ok {
 		return "Block Storage", rest
 	}
+	// A product line can prefix the kind: "Ryzen VPS builder1.example.com".
+	if f := strings.Fields(s); len(f) >= 3 && (f[1] == "VPS" || f[1] == "VDS") {
+		return f[0] + " " + f[1], strings.Join(f[2:], " ")
+	}
 	if i := strings.IndexByte(s, ' '); i >= 0 {
 		return s[:i], s[i+1:]
 	}
