@@ -14,9 +14,10 @@ import (
 type Expect struct {
 	Hosts         []string `json:"hosts,omitempty"` // every hostname that must exist, run and be active
 	AlertNewHosts bool     `json:"alert_new_hosts,omitempty"`
-	IPs           []string `json:"ips,omitempty"`        // addresses that must stay attached
-	MinCredit     *float64 `json:"min_credit,omitempty"` // warn when credit falls below this (USD)
-	WebhookID     int      `json:"webhook_id,omitempty"` // the webhook that must stay enabled
+	IPs           []string `json:"ips,omitempty"`         // addresses that must stay attached
+	MinCredit     *float64 `json:"min_credit,omitempty"`  // warn when credit falls below this (USD)
+	WebhookID     int      `json:"webhook_id,omitempty"`  // the webhook that must stay enabled
+	WebhookURL    string   `json:"webhook_url,omitempty"` // or: the receiver URL a webhook must point at
 }
 
 // Reconcile reads the account and returns every open finding. Read errors are
@@ -109,6 +110,27 @@ func Reconcile(ctx context.Context, c *api.Client, ex Expect, now time.Time) ([]
 				if !have[want] {
 					add("ip:"+want, Critical, "DartNode IP not attached: "+want, "")
 				}
+			}
+		}
+	}
+
+	if ex.WebhookID == 0 && ex.WebhookURL != "" {
+		hooks, err := c.Webhooks(ctx)
+		if err != nil {
+			add("api:webhook", Warning, "DartNode API: cannot list webhooks", err.Error())
+			unevaluated = append(unevaluated, "webhook:")
+		} else {
+			found := 0
+			for _, h := range hooks {
+				if h.URL == ex.WebhookURL {
+					found++
+					if disabled, known := api.WebhookDisabled(h); known && disabled {
+						add(fmt.Sprintf("webhook:%d:disabled", h.ID), Critical, fmt.Sprintf("DartNode webhook %d is disabled", h.ID), "DartNode disables a webhook after 10 failed deliveries; fix the receiver, then re-enable it")
+					}
+				}
+			}
+			if found == 0 {
+				add("webhook:missing", Critical, "No DartNode webhook points at "+ex.WebhookURL, "events are not being delivered; run scripts/setup-webhook.sh")
 			}
 		}
 	}

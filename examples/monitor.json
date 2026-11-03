@@ -13,7 +13,7 @@
     "alert_new_hosts": true,
     "ips": [],
     "min_credit": 10,
-    "webhook_id": 0
+    "webhook_url": "https://hooks.example.com/dartnode/webhook"
   },
 
   "sinks": [

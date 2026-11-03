@@ -59,7 +59,7 @@ echo "    secret file: $secret_file (mode 600)"
 echo "    webhook id:  ${id:-see dnctl webhooks list}"
 echo
 echo "Next:"
-echo "  - set \"secret_file\": \"$secret_file\" and \"expect\": {\"webhook_id\": ${id:-<id>}} in the monitor config"
+echo "  - set \"secret_file\": \"$secret_file\" and \"expect\": {\"webhook_url\": \"$url\"} in the monitor config"
 echo "  - restart dnctl monitor serve so it loads the secret"
 echo "  - prove the path end to end:"
 echo "      dnctl monitor send-test --secret-file $secret_file --url $url"

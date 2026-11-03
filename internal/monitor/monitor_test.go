@@ -377,3 +377,32 @@ func TestInboxIDsDifferingInCaseStayDistinct(t *testing.T) {
 		t.Fatal("case-folded collision")
 	}
 }
+
+func TestReconcileWebhookByURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/webhooks":
+			fmt.Fprint(w, `{"success":true,"data":{"webhooks":[{"id":4,"url":"https://a.example/h","active":false},{"id":5,"url":"https://other.example/h","active":true}]}}`)
+		default:
+			fmt.Fprint(w, `{"success":true,"data":{"services":[],"invoices":[],"balance":0}}`)
+		}
+	}))
+	defer srv.Close()
+	c, _ := api.New(srv.URL+"/v1", "dnt_webhook_url_test_token")
+	got, _ := Reconcile(context.Background(), c, Expect{WebhookURL: "https://a.example/h"}, time.Now())
+	keys := map[string]bool{}
+	for _, a := range got {
+		keys[a.Key] = true
+	}
+	if !keys["webhook:4:disabled"] || keys["webhook:missing"] {
+		t.Fatalf("got %v", keys)
+	}
+	got, _ = Reconcile(context.Background(), c, Expect{WebhookURL: "https://none.example/h"}, time.Now())
+	keys = map[string]bool{}
+	for _, a := range got {
+		keys[a.Key] = true
+	}
+	if !keys["webhook:missing"] {
+		t.Fatalf("missing webhook not reported: %v", keys)
+	}
+}

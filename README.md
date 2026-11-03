@@ -103,8 +103,9 @@ holds:
 - an invoice is unpaid or overdue
 - a balance is owed, or credit falls below `min_credit`
 - an expected IP is detached
-- the monitored webhook was disabled or deleted. DartNode disables a webhook
-  after 10 failed deliveries, so this check is what notices.
+- the monitored webhook was disabled or deleted. Set `expect.webhook_url` (or
+  `webhook_id`). DartNode disables a webhook after 10 failed deliveries, so
+  this check is what notices.
 
 It alerts on change: new, worse, and resolved findings. Open critical findings
 are re-sent daily. When part of the API cannot be read, the findings in that
@@ -157,7 +158,7 @@ Each sink takes `min_severity`: `info`, `warning` (default) or `critical`.
    ```
    The signing secret is shown once by DartNode, so `dnctl` writes it straight
    to the secret file (mode 600, never printed). Set `secret_file` and
-   `expect.webhook_id` in the config, then restart the service.
+   `expect.webhook_url` in the config, then restart the service.
 6. **Prove the path.**
    ```sh
    dnctl monitor send-test --secret-file /etc/dnctl/webhook-secret --url https://hooks.example.com/dartnode/webhook
